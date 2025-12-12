@@ -1,10 +1,10 @@
-
 import hashlib, os, sys, random, string, shutil, sqlite3
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 import customtkinter as ctk
 from tkinter import ttk
 import base64
+import datetime
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -18,7 +18,14 @@ class PasswordManagerGUI:
         self.db_path = "passwords.db"
 
         self.init_database()
-        self.show_login_screen()
+
+        # אם אין סיסמה ב-db → רישום חדש, אחרת → login
+        self.cursor.execute("SELECT key_hash FROM db_meta WHERE id=1")
+        if self.cursor.fetchone() is None:
+            self.show_registration_screen()
+        else:
+            self.show_login_screen()
+
         self.root.mainloop()
 
     # ------------------ Database ------------------
@@ -39,11 +46,7 @@ class PasswordManagerGUI:
                     password TEXT,
                     platform TEXT
                 )""")
-            default_key = self.pad_key("password123")
-            default_hash = hashlib.sha256(default_key.encode()).hexdigest()
-            self.cursor.execute("INSERT INTO db_meta (key_hash) VALUES (?)", (default_hash,))
-            self.conn.commit()
-            self.show_message("Database", "Default decryption key is 'password123'")
+            self.conn.commit()  # ללא סיסמה דיפולטית
 
     def pad_key(self, key):
         return key + ("0" * (16 - len(key) % 16)) if len(key) % 16 != 0 else key
@@ -51,10 +54,6 @@ class PasswordManagerGUI:
     def get_db_hash(self):
         self.cursor.execute("SELECT key_hash FROM db_meta WHERE id=1")
         return self.cursor.fetchone()[0]
-
-    import base64
-    from Crypto.Cipher import AES
-    from Crypto.Util.Padding import unpad
 
     def decrypt_passwords(self):
         self.cursor.execute("SELECT id, username, password, platform FROM credentials")
@@ -64,7 +63,6 @@ class PasswordManagerGUI:
             dec_pwd = ""
             if enc_pwd_b64:
                 try:
-                    # תיקון padding ל-Base64
                     missing_padding = len(enc_pwd_b64) % 4
                     if missing_padding:
                         enc_pwd_b64 += '=' * (4 - missing_padding)
@@ -76,8 +74,6 @@ class PasswordManagerGUI:
                     dec_pwd = "<Error>"
             self.records.append([rid, user, dec_pwd, platform])
         self.records_count = len(self.records)
-
-    import base64
 
     def save_record(self, record):
         aes = AES.new(self.decryption_key.encode(), AES.MODE_CBC, self.decryption_key[:16].encode())
@@ -114,6 +110,46 @@ class PasswordManagerGUI:
         ctk.CTkLabel(top, text=message, wraplength=300).pack(pady=20)
         ctk.CTkButton(top, text="OK", command=top.destroy).pack(pady=10)
         top.bind("<Return>", lambda e: top.destroy())
+
+    # ------------------ Registration Screen ------------------
+    def show_registration_screen(self):
+        self.reg_frame = ctk.CTkFrame(self.root)
+        self.reg_frame.pack(pady=50, padx=50, fill="both", expand=True)
+
+        ctk.CTkLabel(self.reg_frame, text="Create New Decryption Key:", font=("Arial", 16)).pack(pady=10)
+        self.new_key_entry = ctk.CTkEntry(self.reg_frame, show="*")
+        self.new_key_entry.pack(pady=10)
+        self.new_key_entry.focus()
+
+        ctk.CTkLabel(self.reg_frame, text="Confirm Decryption Key:", font=("Arial", 16)).pack(pady=10)
+        self.confirm_key_entry = ctk.CTkEntry(self.reg_frame, show="*")
+        self.confirm_key_entry.pack(pady=10)
+
+        def register():
+            key = self.new_key_entry.get()
+            confirm = self.confirm_key_entry.get()
+            if not key or not confirm:
+                self.show_message("Error", "All fields are required")
+                return
+            if key != confirm:
+                self.show_message("Error", "Keys do not match")
+                return
+            if len(key) < 10:
+                self.show_message("Error", "Key too short")
+                return
+
+            padded_key = self.pad_key(key)
+            key_hash = hashlib.sha256(padded_key.encode()).hexdigest()
+            self.cursor.execute("INSERT INTO db_meta (key_hash) VALUES (?)", (key_hash,))
+            self.conn.commit()
+
+            self.decryption_key = padded_key
+            self.db_key_hash = key_hash
+
+            self.reg_frame.destroy()
+            self.show_main_screen()
+
+        ctk.CTkButton(self.reg_frame, text="Register", command=register).pack(pady=20)
 
     # ------------------ Login ------------------
     def show_login_screen(self):
@@ -173,9 +209,12 @@ class PasswordManagerGUI:
             ("Exit", self.root.destroy)
         ]
 
-        for text, cmd in actions:
-            b = ctk.CTkButton(btn_frame, text=text, command=cmd, width=110)
-            b.pack(side="left", padx=5)
+        for i, (text, cmd) in enumerate(actions):
+            b = ctk.CTkButton(btn_frame, text=text, command=cmd, width=120)
+            b.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
+        for i in range(len(actions)):
+            btn_frame.grid_columnconfigure(i, weight=1)
+
         self.refresh_treeview()
 
     def refresh_treeview(self):
@@ -184,7 +223,7 @@ class PasswordManagerGUI:
         for record in self.records:
             self.tree.insert("", "end", values=record)
 
-    # ------------------ Add/Edit ------------------
+    # ------------------ Add/Edit/Delete ------------------
     def add_record_gui(self):
         self.record_popup("Add Credential")
 
@@ -209,7 +248,6 @@ class PasswordManagerGUI:
 
         for i, label in enumerate(labels):
             ctk.CTkLabel(top, text=label).pack(pady=5)
-            # הצגת סיסמה בעריכה
             if record and label == "Password":
                 e = ctk.CTkEntry(top)
             else:
@@ -235,7 +273,6 @@ class PasswordManagerGUI:
         save_button.pack(pady=10)
         top.bind("<Return>", lambda e: save())
 
-    # ------------------ Delete ------------------
     def delete_record_gui(self):
         selected = self.tree.selection()
         if not selected:
@@ -248,9 +285,11 @@ class PasswordManagerGUI:
         top.transient(self.root)
         top.grab_set()
         ctk.CTkLabel(top, text="Are you sure you want to delete this record?", wraplength=300).pack(pady=20)
+
         def yes():
             self.delete_record(rid)
             top.destroy()
+
         ctk.CTkButton(top, text="Yes", command=yes).pack(side="left", padx=20, pady=10)
         ctk.CTkButton(top, text="No", command=top.destroy).pack(side="right", padx=20, pady=10)
         top.bind("<Return>", lambda e: yes())
@@ -287,10 +326,9 @@ class PasswordManagerGUI:
                 self.show_message("Error", "Passwords do not match")
                 return
 
-            # פענוח כל הסיסמאות עם המפתח הישן
             decrypted_records = []
             for rec in self.records:
-                if rec[2]:  # אם יש סיסמה
+                if rec[2]:
                     aes_old = AES.new(old_key.encode(), AES.MODE_CBC, old_key[:16].encode())
                     enc_pwd = base64.b64decode(self.cursor.execute(
                         "SELECT password FROM credentials WHERE id=?", (rec[0],)
@@ -300,13 +338,11 @@ class PasswordManagerGUI:
                     dec_pwd = ""
                 decrypted_records.append([rec[0], rec[1], dec_pwd, rec[3]])
 
-            # שינוי מפתח
             self.decryption_key = self.pad_key(new)
             self.db_key_hash = hashlib.sha256(self.decryption_key.encode()).hexdigest()
             self.cursor.execute("UPDATE db_meta SET key_hash=? WHERE id=1", (self.db_key_hash,))
             self.conn.commit()
 
-            # הצפנה מחדש של כל הסיסמאות עם המפתח החדש
             for rec in decrypted_records:
                 self.save_record(rec)
 
@@ -339,7 +375,6 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: copy_pwd())
 
     def backup_db_gui(self):
-        import datetime
         self.conn.close()
         backup_name = f"passwords_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         shutil.copyfile(self.db_path, backup_name)
@@ -354,6 +389,7 @@ class PasswordManagerGUI:
         top.transient(self.root)
         top.grab_set()
         ctk.CTkLabel(top, text="Are you sure you want to erase the database?", wraplength=300).pack(pady=20)
+
         def yes():
             self.cursor.execute("DELETE FROM credentials")
             self.conn.commit()
@@ -361,6 +397,7 @@ class PasswordManagerGUI:
             self.refresh_treeview()
             top.destroy()
             self.show_message("Erased", "Database erased")
+
         ctk.CTkButton(top, text="Yes", command=yes).pack(side="left", padx=20, pady=10)
         ctk.CTkButton(top, text="No", command=top.destroy).pack(side="right", padx=20, pady=10)
         top.bind("<Return>", lambda e: yes())
