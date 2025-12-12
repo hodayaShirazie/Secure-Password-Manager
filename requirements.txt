@@ -1,4 +1,0 @@
-pycryptodome
-pycryptodomex
-tabulate
-getpass
