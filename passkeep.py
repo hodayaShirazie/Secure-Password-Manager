@@ -11,15 +11,35 @@ ctk.set_default_color_theme("blue")
 
 
 class PasswordManagerGUI:
+    """
+    Secure Password Manager GUI application.
+
+    This application allows users to securely store, encrypt, decrypt,
+    and manage credentials using AES encryption and a local SQLite database.
+    The GUI is implemented using CustomTkinter.
+    """
     def __init__(self):
+        """Initializes the main window, and loads the initial application state."""
+
         self.root = ctk.CTk()
-        self.root.geometry("800x500")
         self.root.title("Secure Password Manager")
         self.db_path = "passwords.db"
 
+        # Desired window size
+        width = 1200
+        height = 500
+
+        # Center on screen
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w // 2) - (width // 2)
+        y = (screen_h // 2) - (height // 2)
+
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
         self.init_database()
 
-        # אם אין סיסמה ב-db → רישום חדש, אחרת → login
+        # If no key exists in the database, show registration; otherwise, show login
         self.cursor.execute("SELECT key_hash FROM db_meta WHERE id=1")
         if self.cursor.fetchone() is None:
             self.show_registration_screen()
@@ -30,6 +50,8 @@ class PasswordManagerGUI:
 
     # ------------------ Database ------------------
     def init_database(self):
+        """Initializes the SQLite database and creates required tables if the database does not exist."""
+
         new_db = not os.path.exists(self.db_path)
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
@@ -46,16 +68,22 @@ class PasswordManagerGUI:
                     password TEXT,
                     platform TEXT
                 )""")
-            self.conn.commit()  # ללא סיסמה דיפולטית
+            self.conn.commit()
 
     def pad_key(self, key):
+        """Pads the encryption key to a valid AES block size."""
+
         return key + ("0" * (16 - len(key) % 16)) if len(key) % 16 != 0 else key
 
     def get_db_hash(self):
+        """Retrieves the stored hash of the database encryption key."""
+
         self.cursor.execute("SELECT key_hash FROM db_meta WHERE id=1")
         return self.cursor.fetchone()[0]
 
     def decrypt_passwords(self):
+        """Decrypts all stored passwords from the database and loads them into memory."""
+
         self.cursor.execute("SELECT id, username, password, platform FROM credentials")
         self.records = []
         for row in self.cursor.fetchall():
@@ -76,9 +104,11 @@ class PasswordManagerGUI:
         self.records_count = len(self.records)
 
     def save_record(self, record):
+        """Encrypts and saves a credential record to the database."""
+
         aes = AES.new(self.decryption_key.encode(), AES.MODE_CBC, self.decryption_key[:16].encode())
         enc_pwd = aes.encrypt(pad(record[2].encode(), AES.block_size))
-        enc_pwd_b64 = base64.b64encode(enc_pwd).decode()  # שמירה כ-string
+        enc_pwd_b64 = base64.b64encode(enc_pwd).decode()
 
         if record[0] is None:
             self.cursor.execute(
@@ -95,24 +125,49 @@ class PasswordManagerGUI:
         self.refresh_treeview()
 
     def delete_record(self, rid):
+        """Deletes a credential record from the database by its ID."""
+
         self.cursor.execute("DELETE FROM credentials WHERE id=?", (rid,))
         self.conn.commit()
         self.decrypt_passwords()
         self.refresh_treeview()
 
     # ------------------ GUI Message ------------------
+    def center_popup(self, win):
+        """Centers a popup window relative to the main application window."""
+
+        win.update_idletasks()
+
+        root_x = self.root.winfo_x()
+        root_y = self.root.winfo_y()
+        root_w = self.root.winfo_width()
+        root_h = self.root.winfo_height()
+
+        win_w = win.winfo_width()
+        win_h = win.winfo_height()
+
+        x = root_x + (root_w // 2) - (win_w // 2)
+        y = root_y + (root_h // 2) - (win_h // 2)
+
+        win.geometry(f"+{x}+{y}")
+
     def show_message(self, title, message):
+        """Displays a modal message popup with a title and message."""
+
         top = ctk.CTkToplevel(self.root)
         top.title(title)
         top.geometry("350x150")
         top.transient(self.root)
         top.grab_set()
+        self.center_popup(top)
         ctk.CTkLabel(top, text=message, wraplength=300).pack(pady=20)
         ctk.CTkButton(top, text="OK", command=top.destroy).pack(pady=10)
         top.bind("<Return>", lambda e: top.destroy())
 
     # ------------------ Registration Screen ------------------
     def show_registration_screen(self):
+        """Displays the initial registration screen for creating a new encryption key."""
+
         self.reg_frame = ctk.CTkFrame(self.root)
         self.reg_frame.pack(pady=50, padx=50, fill="both", expand=True)
 
@@ -153,6 +208,8 @@ class PasswordManagerGUI:
 
     # ------------------ Login ------------------
     def show_login_screen(self):
+        """Displays the login screen for entering the database encryption key."""
+
         self.login_frame = ctk.CTkFrame(self.root)
         self.login_frame.pack(pady=50, padx=50, fill="both", expand=True)
 
@@ -165,6 +222,8 @@ class PasswordManagerGUI:
         ctk.CTkButton(self.login_frame, text="Login", command=self.verify_login).pack(pady=20)
 
     def verify_login(self):
+        """Verifies the entered encryption key and grants access if valid."""
+
         key = self.key_entry.get()
         if not key:
             self.show_message("Error", "Please enter a key")
@@ -181,6 +240,8 @@ class PasswordManagerGUI:
 
     # ------------------ Main Screen ------------------
     def show_main_screen(self):
+        """Displays the main application screen with stored credentials and actions."""
+
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -218,6 +279,8 @@ class PasswordManagerGUI:
         self.refresh_treeview()
 
     def refresh_treeview(self):
+        """Refreshes the credentials table with the latest decrypted records."""
+
         for item in self.tree.get_children():
             self.tree.delete(item)
         for record in self.records:
@@ -225,9 +288,13 @@ class PasswordManagerGUI:
 
     # ------------------ Add/Edit/Delete ------------------
     def add_record_gui(self):
+        """Opens a popup window for adding a new credential record."""
+
         self.record_popup("Add Credential")
 
     def edit_record_gui(self):
+        """Opens a popup window for editing the selected credential record."""
+
         selected = self.tree.selection()
         if not selected:
             self.show_message("Info", "Select a record to edit")
@@ -237,11 +304,14 @@ class PasswordManagerGUI:
         self.record_popup("Edit Credential", record)
 
     def record_popup(self, title, record=None):
+        """Displays a popup window for adding or editing a credential record."""
+
         top = ctk.CTkToplevel(self.root)
         top.title(title)
         top.geometry("400x300")
         top.transient(self.root)
         top.grab_set()
+        self.center_popup(top)
 
         labels = ["Username/Email", "Password", "Platform"]
         entries = []
@@ -274,6 +344,8 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: save())
 
     def delete_record_gui(self):
+        """Displays a confirmation popup for deleting the selected credential record."""
+
         selected = self.tree.selection()
         if not selected:
             self.show_message("Info", "Select a record to delete")
@@ -284,6 +356,7 @@ class PasswordManagerGUI:
         top.geometry("350x150")
         top.transient(self.root)
         top.grab_set()
+        self.center_popup(top)
         ctk.CTkLabel(top, text="Are you sure you want to delete this record?", wraplength=300).pack(pady=20)
 
         def yes():
@@ -296,11 +369,14 @@ class PasswordManagerGUI:
 
     # ------------------ Other Utilities ------------------
     def change_db_password_gui(self):
+        """Displays a popup for changing the database encryption key."""
+
         top = ctk.CTkToplevel(self.root)
         top.title("Change DB Password")
         top.geometry("400x300")
         top.transient(self.root)
         top.grab_set()
+        self.center_popup(top)
 
         entries = []
         for label, show in [("Current Key", "*"), ("New Key", "*"), ("Confirm New Key", "*")]:
@@ -353,11 +429,14 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: change())
 
     def generate_password_gui(self):
+        """Generates a secure random password and displays it to the user."""
+
         top = ctk.CTkToplevel(self.root)
         top.title("Generate Password")
         top.geometry("400x200")
         top.transient(self.root)
         top.grab_set()
+        self.center_popup(top)
 
         pwd = "".join(random.choices(string.ascii_letters + string.digits + string.punctuation, k=32))
         ctk.CTkLabel(top, text="Generated Password:").pack(pady=10)
@@ -375,6 +454,8 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: copy_pwd())
 
     def backup_db_gui(self):
+        """Creates a backup copy of the database file."""
+
         self.conn.close()
         backup_name = f"passwords_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         shutil.copyfile(self.db_path, backup_name)
@@ -383,11 +464,14 @@ class PasswordManagerGUI:
         self.show_message("Backup", f"Backup created: {backup_name}")
 
     def erase_db_gui(self):
+        """Displays a confirmation popup and erases all stored credentials."""
+
         top = ctk.CTkToplevel(self.root)
         top.title("Erase Database")
         top.geometry("350x150")
         top.transient(self.root)
         top.grab_set()
+        self.center_popup(top)
         ctk.CTkLabel(top, text="Are you sure you want to erase the database?", wraplength=300).pack(pady=20)
 
         def yes():
