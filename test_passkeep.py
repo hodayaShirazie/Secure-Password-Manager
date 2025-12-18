@@ -42,6 +42,29 @@ class TestPassKeepLogic(unittest.TestCase):
         self.assertTrue(padded.startswith(key))
         print('test_pad_key: PASSED')
 
+    def test_pad_key_already_multiple_of_16(self):
+        # Ensures pad_key does not modify a key that already has a valid AES length
+        key = "A" * 16
+        padded = pad_key(key)
+        self.assertEqual(padded, key)
+        print('test_pad_key_already_multiple_of_16: PASSED')
+
+    def test_encrypt_decrypt_empty_password(self):
+        # Verifies encryption and decryption work correctly even for an empty password
+        key = pad_key("testkey12345")
+        password = ""
+        enc = encrypt_password(key, password)
+        dec = decrypt_password(key, enc)
+        self.assertEqual(password, dec)
+        print('test_encrypt_decrypt_empty_password: PASSED')
+
+    def test_decrypt_invalid_base64_fails(self):
+        # Ensures decryption fails when input is not valid Base64
+        key = pad_key("testkey12345")
+        with self.assertRaises(Exception):
+            decrypt_password(key, "not_base64!!!")
+        print('test_decrypt_invalid_base64_fails: PASSED')
+
     def test_encrypt_decrypt(self):
         # Check that encryption and decryption work as expected
         key = pad_key('testkey12345')
