@@ -11,7 +11,15 @@ ctk.set_default_color_theme("blue")
 
 
 class PasswordManagerGUI:
+    """
+    Main GUI class for PassKeep password manager.
+    Handles user registration, login, credential management, encryption, and database operations.
+    """
+
     def __init__(self):
+        """
+        Initialize the main window, set up the database, and start the application.
+        """
         self.root = ctk.CTk()
         self.root.title("Secure Password Manager")
         self.db_path = "passwords.db"
@@ -37,6 +45,10 @@ class PasswordManagerGUI:
 
     # ------------------ KDF ------------------
     def derive_key(self, password, salt):
+        """
+        Derive a secure key from the password and salt using PBKDF2-HMAC-SHA256.
+        Returns a 32-byte key for AES-256 encryption.
+        """
         return hashlib.pbkdf2_hmac(
             'sha256',
             password.encode(),
@@ -47,6 +59,9 @@ class PasswordManagerGUI:
 
     # ------------------ Database ------------------
     def init_database(self):
+        """
+        Initialize the SQLite database and create required tables if the database does not exist.
+        """
         new_db = not os.path.exists(self.db_path)
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
@@ -67,10 +82,18 @@ class PasswordManagerGUI:
             self.conn.commit()
 
     def get_db_meta(self):
+        """
+        Retrieve the stored hash and salt of the database encryption key.
+        Returns (key_hash, salt).
+        """
         self.cursor.execute("SELECT key_hash, salt FROM db_meta WHERE id=1")
         return self.cursor.fetchone()
 
     def decrypt_passwords(self):
+        """
+        Decrypt all stored passwords from the database and load them into memory.
+        Populates self.records with decrypted credentials.
+        """
         self.cursor.execute("SELECT id, username, password, platform FROM credentials")
         self.records = []
         for row in self.cursor.fetchall():
@@ -90,6 +113,9 @@ class PasswordManagerGUI:
         self.records_count = len(self.records)
 
     def save_record(self, record):
+        """
+        Encrypt and save a credential record to the database (insert or update).
+        """
         aes = AES.new(self.decryption_key, AES.MODE_CBC, self.decryption_key[:16])
         enc_pwd = aes.encrypt(pad(record[2].encode(), AES.block_size))
         enc_pwd_b64 = base64.b64encode(enc_pwd).decode()
@@ -109,6 +135,9 @@ class PasswordManagerGUI:
         self.refresh_treeview()
 
     def delete_record(self, rid):
+        """
+        Delete a credential record from the database by its ID.
+        """
         self.cursor.execute("DELETE FROM credentials WHERE id=?", (rid,))
         self.conn.commit()
         self.decrypt_passwords()
@@ -116,6 +145,9 @@ class PasswordManagerGUI:
 
     # ------------------ GUI Message ------------------
     def center_popup(self, win):
+        """
+        Center a popup window relative to the main application window.
+        """
         win.update_idletasks()
         root_x = self.root.winfo_x()
         root_y = self.root.winfo_y()
@@ -128,6 +160,9 @@ class PasswordManagerGUI:
         win.geometry(f"+{x}+{y}")
 
     def show_message(self, title, message):
+        """
+        Display a modal message popup with a title and message.
+        """
         top = ctk.CTkToplevel(self.root)
         top.title(title)
         top.geometry("350x150")
@@ -140,6 +175,9 @@ class PasswordManagerGUI:
 
     # ------------------ Registration ------------------
     def show_registration_screen(self):
+        """
+        Display the registration screen for creating a new encryption key.
+        """
         self.reg_frame = ctk.CTkFrame(self.root)
         self.reg_frame.pack(pady=50, padx=50, fill="both", expand=True)
 
@@ -189,6 +227,9 @@ class PasswordManagerGUI:
 
     # ------------------ Login ------------------
     def show_login_screen(self):
+        """
+        Display the login screen for entering the database encryption key.
+        """
         self.login_frame = ctk.CTkFrame(self.root)
         self.login_frame.pack(pady=50, padx=50, fill="both", expand=True)
 
@@ -201,6 +242,9 @@ class PasswordManagerGUI:
         ctk.CTkButton(self.login_frame, text="Login", command=self.verify_login).pack(pady=20)
 
     def verify_login(self):
+        """
+        Verify the entered encryption key and grant access if valid.
+        """
         key = self.key_entry.get()
         if not key:
             self.show_message("Error", "Please enter a key")
@@ -222,6 +266,9 @@ class PasswordManagerGUI:
 
     # ------------------ Main Screen ------------------
     def show_main_screen(self):
+        """
+        Display the main application screen with stored credentials and actions.
+        """
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -256,6 +303,9 @@ class PasswordManagerGUI:
         self.refresh_treeview()
 
     def refresh_treeview(self):
+        """
+        Refresh the credentials table with the latest decrypted records.
+        """
         for item in self.tree.get_children():
             self.tree.delete(item)
         for record in self.records:
@@ -264,12 +314,16 @@ class PasswordManagerGUI:
 
     # ------------------ Add/Edit/Delete ------------------
     def add_record_gui(self):
-        """Opens a popup window for adding a new credential record."""
+        """
+        Open a popup window for adding a new credential record.
+        """
 
         self.record_popup("Add Credential")
 
     def edit_record_gui(self):
-        """Opens a popup window for editing the selected credential record."""
+        """
+        Open a popup window for editing the selected credential record.
+        """
 
         selected = self.tree.selection()
         if not selected:
@@ -280,7 +334,9 @@ class PasswordManagerGUI:
         self.record_popup("Edit Credential", record)
 
     def record_popup(self, title, record=None):
-        """Displays a popup window for adding or editing a credential record."""
+        """
+        Display a popup window for adding or editing a credential record.
+        """
 
         top = ctk.CTkToplevel(self.root)
         top.title(title)
@@ -320,7 +376,9 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: save())
 
     def delete_record_gui(self):
-        """Displays a confirmation popup for deleting the selected credential record."""
+        """
+        Display a confirmation popup for deleting the selected credential record.
+        """
 
         selected = self.tree.selection()
         if not selected:
@@ -345,7 +403,9 @@ class PasswordManagerGUI:
 
     # ------------------ Other Utilities ------------------
     def change_db_password_gui(self):
-        """Displays a popup for changing the database encryption key."""
+        """
+        Display a popup for changing the database encryption key and re-encrypt all credentials.
+        """
 
         top = ctk.CTkToplevel(self.root)
         top.title("Change DB Password")
@@ -367,7 +427,7 @@ class PasswordManagerGUI:
                 self.show_message("Error", "All fields are required")
                 return
 
-            # --- אימות סיסמה ישנה באמצעות KDF ---
+            # --- Verify old password using KDF ---
             self.cursor.execute("SELECT salt FROM db_meta WHERE id=1")
             salt = self.cursor.fetchone()[0]
             derived_current = self.derive_key(current, salt)
@@ -382,7 +442,7 @@ class PasswordManagerGUI:
                 self.show_message("Error", "Passwords do not match")
                 return
 
-            # --- פענוח כל הסיסמאות עם המפתח הישן ---
+            # --- Decrypt all passwords with the old key ---
             decrypted_records = []
             old_key = derived_current
             for rec in self.records:
@@ -396,7 +456,7 @@ class PasswordManagerGUI:
                     dec_pwd = ""
                 decrypted_records.append([rec[0], rec[1], dec_pwd, rec[3]])
 
-            # --- יצירת מפתח חדש עם KDF + salt חדש ---
+            # --- Create new key with KDF + new salt ---
             new_salt = os.urandom(16)
             new_derived_key = self.derive_key(new, new_salt)
             self.decryption_key = new_derived_key
@@ -407,7 +467,7 @@ class PasswordManagerGUI:
             )
             self.conn.commit()
 
-            # --- הצפנה מחדש של כל הרשומות עם המפתח החדש ---
+            # --- Re-encrypt all records with the new key ---
             for rec in decrypted_records:
                 self.save_record(rec)
 
@@ -418,7 +478,9 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: change())
 
     def generate_password_gui(self):
-        """Generates a secure random password and displays it to the user."""
+        """
+        Generate a secure random password and display it to the user.
+        """
 
         top = ctk.CTkToplevel(self.root)
         top.title("Generate Password")
@@ -443,7 +505,9 @@ class PasswordManagerGUI:
         top.bind("<Return>", lambda e: copy_pwd())
 
     def backup_db_gui(self):
-        """Creates a backup copy of the database file."""
+        """
+        Create a backup copy of the database file.
+        """
 
         self.conn.close()
         backup_name = f"passwords_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
@@ -453,7 +517,9 @@ class PasswordManagerGUI:
         self.show_message("Backup", f"Backup created: {backup_name}")
 
     def erase_db_gui(self):
-        """Displays a confirmation popup and erases all stored credentials."""
+        """
+        Display a confirmation popup and erase all stored credentials.
+        """
 
         top = ctk.CTkToplevel(self.root)
         top.title("Erase Database")
