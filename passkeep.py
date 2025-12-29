@@ -11,35 +11,22 @@ ctk.set_default_color_theme("blue")
 
 
 class PasswordManagerGUI:
-    """
-    Secure Password Manager GUI application.
-
-    This application allows users to securely store, encrypt, decrypt,
-    and manage credentials using AES encryption and a local SQLite database.
-    The GUI is implemented using CustomTkinter.
-    """
     def __init__(self):
-        """Initializes the main window, and loads the initial application state."""
-
         self.root = ctk.CTk()
         self.root.title("Secure Password Manager")
         self.db_path = "passwords.db"
 
-        # Desired window size
         width = 1200
         height = 500
 
-        # Center on screen
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         x = (screen_w // 2) - (width // 2)
         y = (screen_h // 2) - (height // 2)
-
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
         self.init_database()
 
-        # If no key exists in the database, show registration; otherwise, show login
         self.cursor.execute("SELECT key_hash FROM db_meta WHERE id=1")
         if self.cursor.fetchone() is None:
             self.show_registration_screen()
@@ -48,10 +35,18 @@ class PasswordManagerGUI:
 
         self.root.mainloop()
 
+    # ------------------ KDF ------------------
+    def derive_key(self, password, salt):
+        return hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode(),
+            salt,
+            200_000,
+            dklen=32
+        )
+
     # ------------------ Database ------------------
     def init_database(self):
-        """Initializes the SQLite database and creates required tables if the database does not exist."""
-
         new_db = not os.path.exists(self.db_path)
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
@@ -59,7 +54,8 @@ class PasswordManagerGUI:
             self.cursor.execute("""
                 CREATE TABLE db_meta (
                     id INTEGER PRIMARY KEY,
-                    key_hash TEXT NOT NULL
+                    key_hash TEXT NOT NULL,
+                    salt BLOB NOT NULL
                 )""")
             self.cursor.execute("""
                 CREATE TABLE credentials (
@@ -70,20 +66,11 @@ class PasswordManagerGUI:
                 )""")
             self.conn.commit()
 
-    def pad_key(self, key):
-        """Pads the encryption key to a valid AES block size."""
-
-        return key + ("0" * (16 - len(key) % 16)) if len(key) % 16 != 0 else key
-
-    def get_db_hash(self):
-        """Retrieves the stored hash of the database encryption key."""
-
-        self.cursor.execute("SELECT key_hash FROM db_meta WHERE id=1")
-        return self.cursor.fetchone()[0]
+    def get_db_meta(self):
+        self.cursor.execute("SELECT key_hash, salt FROM db_meta WHERE id=1")
+        return self.cursor.fetchone()
 
     def decrypt_passwords(self):
-        """Decrypts all stored passwords from the database and loads them into memory."""
-
         self.cursor.execute("SELECT id, username, password, platform FROM credentials")
         self.records = []
         for row in self.cursor.fetchall():
@@ -95,18 +82,15 @@ class PasswordManagerGUI:
                     if missing_padding:
                         enc_pwd_b64 += '=' * (4 - missing_padding)
                     enc_pwd = base64.b64decode(enc_pwd_b64)
-                    aes = AES.new(self.decryption_key.encode(), AES.MODE_CBC, self.decryption_key[:16].encode())
+                    aes = AES.new(self.decryption_key, AES.MODE_CBC, self.decryption_key[:16])
                     dec_pwd = unpad(aes.decrypt(enc_pwd), AES.block_size).decode()
-                except Exception as e:
-                    print(f"Failed to decrypt record {rid}: {e}")
+                except Exception:
                     dec_pwd = "<Error>"
             self.records.append([rid, user, dec_pwd, platform])
         self.records_count = len(self.records)
 
     def save_record(self, record):
-        """Encrypts and saves a credential record to the database."""
-
-        aes = AES.new(self.decryption_key.encode(), AES.MODE_CBC, self.decryption_key[:16].encode())
+        aes = AES.new(self.decryption_key, AES.MODE_CBC, self.decryption_key[:16])
         enc_pwd = aes.encrypt(pad(record[2].encode(), AES.block_size))
         enc_pwd_b64 = base64.b64encode(enc_pwd).decode()
 
@@ -125,8 +109,6 @@ class PasswordManagerGUI:
         self.refresh_treeview()
 
     def delete_record(self, rid):
-        """Deletes a credential record from the database by its ID."""
-
         self.cursor.execute("DELETE FROM credentials WHERE id=?", (rid,))
         self.conn.commit()
         self.decrypt_passwords()
@@ -134,26 +116,18 @@ class PasswordManagerGUI:
 
     # ------------------ GUI Message ------------------
     def center_popup(self, win):
-        """Centers a popup window relative to the main application window."""
-
         win.update_idletasks()
-
         root_x = self.root.winfo_x()
         root_y = self.root.winfo_y()
         root_w = self.root.winfo_width()
         root_h = self.root.winfo_height()
-
         win_w = win.winfo_width()
         win_h = win.winfo_height()
-
         x = root_x + (root_w // 2) - (win_w // 2)
         y = root_y + (root_h // 2) - (win_h // 2)
-
         win.geometry(f"+{x}+{y}")
 
     def show_message(self, title, message):
-        """Displays a modal message popup with a title and message."""
-
         top = ctk.CTkToplevel(self.root)
         top.title(title)
         top.geometry("350x150")
@@ -164,25 +138,24 @@ class PasswordManagerGUI:
         ctk.CTkButton(top, text="OK", command=top.destroy).pack(pady=10)
         top.bind("<Return>", lambda e: top.destroy())
 
-    # ------------------ Registration Screen ------------------
+    # ------------------ Registration ------------------
     def show_registration_screen(self):
-        """Displays the initial registration screen for creating a new encryption key."""
-
         self.reg_frame = ctk.CTkFrame(self.root)
         self.reg_frame.pack(pady=50, padx=50, fill="both", expand=True)
 
-        ctk.CTkLabel(self.reg_frame, text="Create New Decryption Key:", font=("Arial", 16)).pack(pady=10)
+        ctk.CTkLabel(self.reg_frame, text="Create New Key:", font=("Arial", 16)).pack(pady=10)
         self.new_key_entry = ctk.CTkEntry(self.reg_frame, show="*")
         self.new_key_entry.pack(pady=10)
         self.new_key_entry.focus()
 
-        ctk.CTkLabel(self.reg_frame, text="Confirm Decryption Key:", font=("Arial", 16)).pack(pady=10)
+        ctk.CTkLabel(self.reg_frame, text="Confirm Key:", font=("Arial", 16)).pack(pady=10)
         self.confirm_key_entry = ctk.CTkEntry(self.reg_frame, show="*")
         self.confirm_key_entry.pack(pady=10)
 
         def register():
             key = self.new_key_entry.get()
             confirm = self.confirm_key_entry.get()
+
             if not key or not confirm:
                 self.show_message("Error", "All fields are required")
                 return
@@ -193,27 +166,33 @@ class PasswordManagerGUI:
                 self.show_message("Error", "Key too short")
                 return
 
-            padded_key = self.pad_key(key)
-            key_hash = hashlib.sha256(padded_key.encode()).hexdigest()
-            self.cursor.execute("INSERT INTO db_meta (key_hash) VALUES (?)", (key_hash,))
+            salt = os.urandom(16)
+            derived_key = self.derive_key(key, salt)
+            key_hash = hashlib.sha256(derived_key).hexdigest()
+
+            self.cursor.execute(
+                "INSERT INTO db_meta (key_hash, salt) VALUES (?, ?)",
+                (key_hash, salt)
+            )
             self.conn.commit()
 
-            self.decryption_key = padded_key
+            self.decryption_key = derived_key
             self.db_key_hash = key_hash
 
+            self.decrypt_passwords()  
             self.reg_frame.destroy()
             self.show_main_screen()
 
         ctk.CTkButton(self.reg_frame, text="Register", command=register).pack(pady=20)
+        for entry in [self.new_key_entry, self.confirm_key_entry]:
+            entry.bind("<Return>", lambda e: register())
 
     # ------------------ Login ------------------
     def show_login_screen(self):
-        """Displays the login screen for entering the database encryption key."""
-
         self.login_frame = ctk.CTkFrame(self.root)
         self.login_frame.pack(pady=50, padx=50, fill="both", expand=True)
 
-        ctk.CTkLabel(self.login_frame, text="Enter Decryption Key:", font=("Arial", 16)).pack(pady=10)
+        ctk.CTkLabel(self.login_frame, text="Enter Key:", font=("Arial", 16)).pack(pady=10)
         self.key_entry = ctk.CTkEntry(self.login_frame, show="*")
         self.key_entry.pack(pady=10)
         self.key_entry.focus()
@@ -222,17 +201,20 @@ class PasswordManagerGUI:
         ctk.CTkButton(self.login_frame, text="Login", command=self.verify_login).pack(pady=20)
 
     def verify_login(self):
-        """Verifies the entered encryption key and grants access if valid."""
-
         key = self.key_entry.get()
         if not key:
             self.show_message("Error", "Please enter a key")
             return
-        self.decryption_key = self.pad_key(key)
-        key_hash = hashlib.sha256(self.decryption_key.encode()).hexdigest()
-        if key_hash != self.get_db_hash():
+
+        stored_hash, salt = self.get_db_meta()
+        derived_key = self.derive_key(key, salt)
+        key_hash = hashlib.sha256(derived_key).hexdigest()
+
+        if key_hash != stored_hash:
             self.show_message("Error", "Incorrect key")
             return
+
+        self.decryption_key = derived_key
         self.db_key_hash = key_hash
         self.login_frame.destroy()
         self.decrypt_passwords()
@@ -240,8 +222,6 @@ class PasswordManagerGUI:
 
     # ------------------ Main Screen ------------------
     def show_main_screen(self):
-        """Displays the main application screen with stored credentials and actions."""
-
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -271,20 +251,16 @@ class PasswordManagerGUI:
         ]
 
         for i, (text, cmd) in enumerate(actions):
-            b = ctk.CTkButton(btn_frame, text=text, command=cmd, width=120)
-            b.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
-        for i in range(len(actions)):
-            btn_frame.grid_columnconfigure(i, weight=1)
+            ctk.CTkButton(btn_frame, text=text, command=cmd, width=120).grid(row=0, column=i, padx=5)
 
         self.refresh_treeview()
 
     def refresh_treeview(self):
-        """Refreshes the credentials table with the latest decrypted records."""
-
         for item in self.tree.get_children():
             self.tree.delete(item)
         for record in self.records:
             self.tree.insert("", "end", values=record)
+
 
     # ------------------ Add/Edit/Delete ------------------
     def add_record_gui(self):
@@ -391,10 +367,14 @@ class PasswordManagerGUI:
                 self.show_message("Error", "All fields are required")
                 return
 
-            old_key = self.decryption_key
-            if hashlib.sha256(self.pad_key(current).encode()).hexdigest() != self.db_key_hash:
+            # --- אימות סיסמה ישנה באמצעות KDF ---
+            self.cursor.execute("SELECT salt FROM db_meta WHERE id=1")
+            salt = self.cursor.fetchone()[0]
+            derived_current = self.derive_key(current, salt)
+            if hashlib.sha256(derived_current).hexdigest() != self.db_key_hash:
                 self.show_message("Error", "Incorrect current key")
                 return
+
             if len(new) < 10:
                 self.show_message("Error", "New key too short")
                 return
@@ -402,10 +382,12 @@ class PasswordManagerGUI:
                 self.show_message("Error", "Passwords do not match")
                 return
 
+            # --- פענוח כל הסיסמאות עם המפתח הישן ---
             decrypted_records = []
+            old_key = derived_current
             for rec in self.records:
                 if rec[2]:
-                    aes_old = AES.new(old_key.encode(), AES.MODE_CBC, old_key[:16].encode())
+                    aes_old = AES.new(old_key, AES.MODE_CBC, old_key[:16])
                     enc_pwd = base64.b64decode(self.cursor.execute(
                         "SELECT password FROM credentials WHERE id=?", (rec[0],)
                     ).fetchone()[0])
@@ -414,11 +396,18 @@ class PasswordManagerGUI:
                     dec_pwd = ""
                 decrypted_records.append([rec[0], rec[1], dec_pwd, rec[3]])
 
-            self.decryption_key = self.pad_key(new)
-            self.db_key_hash = hashlib.sha256(self.decryption_key.encode()).hexdigest()
-            self.cursor.execute("UPDATE db_meta SET key_hash=? WHERE id=1", (self.db_key_hash,))
+            # --- יצירת מפתח חדש עם KDF + salt חדש ---
+            new_salt = os.urandom(16)
+            new_derived_key = self.derive_key(new, new_salt)
+            self.decryption_key = new_derived_key
+            self.db_key_hash = hashlib.sha256(new_derived_key).hexdigest()
+            self.cursor.execute(
+                "UPDATE db_meta SET key_hash=?, salt=? WHERE id=1",
+                (self.db_key_hash, new_salt)
+            )
             self.conn.commit()
 
+            # --- הצפנה מחדש של כל הרשומות עם המפתח החדש ---
             for rec in decrypted_records:
                 self.save_record(rec)
 
